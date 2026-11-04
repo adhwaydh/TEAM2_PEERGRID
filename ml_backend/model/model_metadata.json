@@ -1,0 +1,27 @@
+{
+  "model_type": "RandomForestRegressor",
+  "features": [
+    "year",
+    "phase",
+    "college_type",
+    "course",
+    "category",
+    "college"
+  ],
+  "target": "closing_rank",
+  "rows": 16399,
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "college_count": 295,
+  "course_count": 79,
+  "category_count": 13,
+  "validation_mae_rank": 6511.8,
+  "validation_rmse_rank": 8644.0,
+  "latest_year": 2026,
+  "default_prediction_year": 2026
+}

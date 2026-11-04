@@ -1,0 +1,950 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================================
+    // USER PROFILES
+    // =====================================================
+    match /users/{userId} {
+
+      allow read: if request.auth != null;
+
+      allow create, update: if request.auth != null
+                            && request.auth.uid == userId;
+
+      allow delete: if request.auth != null
+                   && request.auth.uid == userId;
+
+
+      // ===================================================
+      // FOLLOWERS
+      // ===================================================
+      // users/{userId}/followers/{followerUid}
+      //
+      // userId = the person being followed
+      // followerUid = the person who follows them
+      // ===================================================
+      match /followers/{followerUid} {
+
+        // Signed-in users can see follower lists.
+        allow read: if request.auth != null;
+
+        // The profile owner can accept a follow request by
+        // creating the follower relationship.
+        //
+        // The corresponding pending request must exist.
+        allow create: if request.auth != null
+                      && followerUid != userId
+                      && (
+                        (
+                          request.auth.uid == userId
+                          && exists(
+                            /databases/$(database)/documents/users/$(userId)/followRequests/$(followerUid)
+                          )
+                        )
+                        ||
+                        (
+                          request.auth.uid == followerUid
+                          && exists(
+                            /databases/$(database)/documents/users/$(followerUid)/followRequests/$(userId)
+                          )
+                        )
+                      );
+
+        // Either side can remove the relationship.
+        // This supports unfollow/removing a follower.
+        allow delete: if request.auth != null
+                    && (
+                       request.auth.uid == userId
+                       || request.auth.uid == followerUid
+                    );
+
+        // Follower relationships are not edited.
+        allow update: if false;
+      }
+
+
+      // ===================================================
+      // FOLLOWING
+      // ===================================================
+      // users/{userId}/following/{followingUid}
+      //
+      // userId = the person doing the following
+      // followingUid = the person being followed
+      // ===================================================
+      match /following/{followingUid} {
+
+        // Signed-in users can see following lists.
+        allow read: if request.auth != null;
+
+        // A following relationship can only be created
+        // when a pending follow request exists on the
+        // target user's profile.
+        //
+        // This is used when the target accepts the request.
+        allow create: if request.auth != null
+                      && followingUid != userId
+                      && (
+                        (
+                          exists(
+                            /databases/$(database)/documents/users/$(followingUid)/followRequests/$(userId)
+                          )
+                          && (
+                            request.auth.uid == userId
+                            || request.auth.uid == followingUid
+                          )
+                        )
+                        ||
+                        (
+                          request.auth.uid == userId
+                          && exists(
+                            /databases/$(database)/documents/users/$(userId)/followRequests/$(followingUid)
+                          )
+                        )
+                      );
+
+        // Either side can remove the relationship.
+        allow delete: if request.auth != null
+                    && (
+                       request.auth.uid == userId
+                       || request.auth.uid == followingUid
+                    );
+
+        // Following relationships are not edited.
+        allow update: if false;
+      }
+
+
+      // ===================================================
+      // FOLLOW REQUESTS
+      // ===================================================
+      // users/{userId}/followRequests/{requesterUid}
+      //
+      // userId = person receiving the request
+      // requesterUid = person requesting to follow
+      // ===================================================
+      match /followRequests/{requesterUid} {
+
+        // The recipient can see incoming requests.
+        //
+        // The requester can also read their own request
+        // so the UI can display "Requested".
+        allow read: if request.auth != null
+                  && (
+                     request.auth.uid == userId
+                     || request.auth.uid == requesterUid
+                  );
+
+        // A student can send a request only as themselves.
+        allow create: if request.auth != null
+                     && request.auth.uid == requesterUid
+                     && requesterUid != userId;
+
+        // The requester can cancel their own request.
+        // The recipient can delete it when accepting/rejecting.
+        allow delete: if request.auth != null
+                    && (
+                       request.auth.uid == requesterUid
+                       || request.auth.uid == userId
+                    );
+
+        // Requests are not edited.
+        allow update: if false;
+      }
+    }
+
+
+    // =====================================================
+    // NOTIFICATIONS
+    // =====================================================
+    match /notifications/{notificationId} {
+
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.recipientId;
+
+      allow create: if request.auth != null
+                    && request.resource.data.senderId == request.auth.uid
+                    && request.resource.data.recipientId is string
+                    && request.resource.data.recipientId != request.auth.uid;
+
+      allow update: if request.auth != null
+                    && request.auth.uid == resource.data.recipientId
+                    && request.resource.data.diff(resource.data)
+                       .affectedKeys()
+                       .hasOnly(['isRead', 'readAt']);
+
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.recipientId;
+    }
+
+
+    // =====================================================
+    // COLLEGE ADMIN MAPPING
+    // =====================================================
+    match /collegeAdmins/{adminUid} {
+
+      allow read: if request.auth != null
+                  && request.auth.uid == adminUid;
+
+      allow create, update, delete: if false;
+    }
+
+
+    // =====================================================
+    // COLLEGE PROFILES
+    // =====================================================
+    match /colleges/{collegeId} {
+
+      allow read: if request.auth != null;
+
+      allow create, update: if isCollegeAdmin(collegeId);
+
+      allow delete: if false;
+
+
+      // ===================================================
+      // COLLEGE PHOTOS
+      // ===================================================
+      match /photos/{photoId} {
+
+        allow read: if request.auth != null;
+
+        allow create, update, delete:
+          if isCollegeAdmin(collegeId);
+      }
+
+
+      // ===================================================
+      // COLLEGE POSTS
+      // ===================================================
+      match /posts/{postId} {
+
+        allow read: if request.auth != null;
+
+        allow create, update, delete:
+          if isCollegeAdmin(collegeId);
+
+
+        // ===================================================
+        // POST LIKES
+        // ===================================================
+        // Each signed-in student gets one like document,
+        // using their UID as the document ID.
+        // ===================================================
+        match /likes/{userId} {
+
+          // Signed-in students can see likes/counts.
+          allow read: if request.auth != null;
+
+          // A student can like a post only as themselves.
+          allow create: if request.auth != null
+                        && request.auth.uid == userId;
+
+          // A student can remove only their own like.
+          allow delete: if request.auth != null
+                        && request.auth.uid == userId;
+
+          // Like documents are not edited.
+          allow update: if false;
+        }
+
+
+        // ===================================================
+        // POST COMMENTS
+        // ===================================================
+        match /comments/{commentId} {
+
+          // Signed-in students can read comments.
+          allow read: if request.auth != null;
+
+          // A student can create a comment only as themselves.
+          allow create: if request.auth != null
+                        && request.resource.data.userId == request.auth.uid
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() > 0
+                        && request.resource.data.text.size() <= 2000;
+
+          // A student can edit only their own comment.
+          // The author cannot be changed.
+          allow update: if request.auth != null
+                        && resource.data.userId == request.auth.uid
+                        && request.resource.data.userId == resource.data.userId
+                        && request.resource.data.diff(resource.data)
+                           .affectedKeys()
+                           .hasOnly([
+                             'text',
+                             'updatedAt'
+                           ])
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() > 0
+                        && request.resource.data.text.size() <= 2000;
+
+          // A student can delete only their own comment.
+          allow delete: if request.auth != null
+                        && resource.data.userId == request.auth.uid;
+        }
+      }
+
+
+      // ===================================================
+      // COLLEGE EVENTS
+      // ===================================================
+      match /events/{eventId} {
+
+        allow read: if request.auth != null;
+
+        allow create, update, delete:
+          if isCollegeAdmin(collegeId);
+      }
+    }
+
+
+    // =====================================================
+    // PRIVATE CHATS
+    // =====================================================
+    match /privateChats/{chatId} {
+
+      // ---------------------------------------------------
+      // PRIVATE CHAT FOLLOW SECURITY
+      // ---------------------------------------------------
+      // A private chat is allowed only when both students
+      // mutually follow each other. This means the follow
+      // request has been accepted on both sides.
+      // ---------------------------------------------------
+      function areMutualFollowers(uid1, uid2) {
+        return exists(
+                 /databases/$(database)/documents/users/$(uid1)/following/$(uid2)
+               )
+               && exists(
+                 /databases/$(database)/documents/users/$(uid2)/following/$(uid1)
+               );
+      }
+
+      function validPrivateParticipants(participants) {
+        return participants is list
+               && participants.size() == 2
+               && participants[0] is string
+               && participants[1] is string
+               && participants[0] != participants[1]
+               && areMutualFollowers(participants[0], participants[1]);
+      }
+
+
+      // ---------------------------------------------------
+      // READ
+      // ---------------------------------------------------
+
+      // The Flutter app uses:
+      //
+      // where('participants', arrayContains: uid)
+      //
+      // Therefore a user can read only chats where their
+      // UID is contained in participants.
+      //
+      // Existing chat access also requires the two users to
+      // remain mutual followers.
+      //
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.participants
+                  && validPrivateParticipants(resource.data.participants);
+
+
+      // ---------------------------------------------------
+      // CREATE
+      // ---------------------------------------------------
+
+      // Exactly two users participate in a private chat.
+      // A chat can only be created when those two users
+      // mutually follow each other.
+      //
+      allow create: if request.auth != null
+                    && validPrivateParticipants(
+                         request.resource.data.participants
+                       )
+                    && request.auth.uid in request.resource.data.participants;
+
+
+      // ---------------------------------------------------
+      // UPDATE
+      // ---------------------------------------------------
+
+      // An existing participant can update chat metadata.
+      //
+      // The two participants themselves cannot be replaced.
+      // Order does not matter.
+      //
+      // The participants must continue to be mutual followers.
+      //
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.participants
+                    && request.auth.uid in request.resource.data.participants
+                    && resource.data.participants.size() == 2
+                    && request.resource.data.participants.size() == 2
+                    && resource.data.participants.hasAll(
+                         request.resource.data.participants
+                       )
+                    && request.resource.data.participants.hasAll(
+                         resource.data.participants
+                       )
+                    && validPrivateParticipants(
+                         request.resource.data.participants
+                       );
+
+
+      allow delete: if false;
+
+
+      // ===================================================
+      // PRIVATE CHAT MESSAGES
+      // ===================================================
+      match /messages/{messageId} {
+
+        // -------------------------------------------------
+        // READ MESSAGES
+        // -------------------------------------------------
+        allow read: if request.auth != null
+                    && exists(
+                      /databases/$(database)/documents/privateChats/$(chatId)
+                    )
+                    && request.auth.uid in get(
+                      /databases/$(database)/documents/privateChats/$(chatId)
+                    ).data.participants
+                    && validPrivateParticipants(
+                      get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                    );
+
+
+        // -------------------------------------------------
+        // CREATE MESSAGE
+        // -------------------------------------------------
+        allow create: if request.auth != null
+                      && request.resource.data.senderId == request.auth.uid
+                      && request.resource.data.recipientId is string
+                      && request.resource.data.recipientId != request.auth.uid
+                      && exists(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      )
+                      && request.auth.uid in get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                      && request.resource.data.recipientId in get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                      && validPrivateParticipants(
+                        get(
+                          /databases/$(database)/documents/privateChats/$(chatId)
+                        ).data.participants
+                      );
+
+
+        // -------------------------------------------------
+        // UPDATE MESSAGE
+        // -------------------------------------------------
+
+        // Used for readBy updates.
+        //
+        allow update: if request.auth != null
+                      && exists(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      )
+                      && request.auth.uid in get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                      && validPrivateParticipants(
+                        get(
+                          /databases/$(database)/documents/privateChats/$(chatId)
+                        ).data.participants
+                      );
+
+
+        allow delete: if false;
+      }
+
+
+      // ===================================================
+      // NEW: PRIVATE CHAT TYPING INDICATOR
+      // ===================================================
+      //
+      // Used by the enhanced private chat screen:
+      //
+      // privateChats/{chatId}/typing/{typingUid}
+      //
+      // Each participant writes only their own typing document.
+      // Participants can read the typing status of the other
+      // participant.
+      //
+      match /typing/{typingUid} {
+
+        // A participant can read typing status for this chat.
+        allow read: if request.auth != null
+                    && exists(
+                      /databases/$(database)/documents/privateChats/$(chatId)
+                    )
+                    && request.auth.uid in get(
+                      /databases/$(database)/documents/privateChats/$(chatId)
+                    ).data.participants
+                    && validPrivateParticipants(
+                      get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                    );
+
+
+        // A participant can create or update only their
+        // own typing-status document.
+        allow create, update: if request.auth != null
+                              && request.auth.uid == typingUid
+                              && exists(
+                                /databases/$(database)/documents/privateChats/$(chatId)
+                              )
+                              && request.auth.uid in get(
+                                /databases/$(database)/documents/privateChats/$(chatId)
+                              ).data.participants
+                              && validPrivateParticipants(
+                                get(
+                                  /databases/$(database)/documents/privateChats/$(chatId)
+                                ).data.participants
+                              );
+
+
+        // A participant can delete only their own typing
+        // status document.
+        allow delete: if request.auth != null
+                      && request.auth.uid == typingUid
+                      && exists(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      )
+                      && request.auth.uid in get(
+                        /databases/$(database)/documents/privateChats/$(chatId)
+                      ).data.participants
+                      && validPrivateParticipants(
+                        get(
+                          /databases/$(database)/documents/privateChats/$(chatId)
+                        ).data.participants
+                      );
+      }
+    }
+
+
+    // =====================================================
+    // STUDY GROUPS
+    // =====================================================
+    match /studyGroups/{studyGroupId} {
+
+      // Any signed-in PeerGrid user can browse study groups.
+      allow read: if request.auth != null;
+
+      // A signed-in student can create a study group only
+      // when they are the creator and first member.
+      allow create: if request.auth != null
+                    && request.resource.data.creatorId == request.auth.uid
+                    && request.resource.data.memberIds is list
+                    && request.auth.uid in request.resource.data.memberIds
+                    && request.resource.data.memberCount == 1
+                    && request.resource.data.maxMembers is int
+                    && request.resource.data.maxMembers >= 2
+                    && request.resource.data.maxMembers <= 100;
+
+      // UPDATE STUDY GROUP
+      // Creator can manage members and group details.
+      // A normal member can only join themselves or leave themselves.
+      allow update: if request.auth != null
+                    && (
+                      (
+                        // CREATOR MANAGEMENT
+                        resource.data.creatorId == request.auth.uid
+                        && request.resource.data.creatorId == resource.data.creatorId
+                        && request.resource.data.memberIds is list
+                        && request.resource.data.memberCount is int
+                        && request.resource.data.memberCount == request.resource.data.memberIds.size()
+                        && request.resource.data.memberCount >= 1
+                        && request.resource.data.memberCount <= request.resource.data.maxMembers
+                        && request.auth.uid in request.resource.data.memberIds
+                        && request.resource.data.diff(resource.data)
+                           .affectedKeys()
+                           .hasOnly([
+                             'memberIds',
+                             'memberCount',
+                             'name',
+                             'subject',
+                             'description',
+                             'college',
+                             'year',
+                             'course',
+                             'maxMembers',
+                             'groupProfileImage',
+                             'updatedAt'
+                           ])
+                        && request.resource.data.maxMembers is int
+                        && request.resource.data.maxMembers >= request.resource.data.memberCount
+                        && request.resource.data.maxMembers <= 100
+                      )
+                      ||
+                      (
+                        // NORMAL MEMBER: only self join/leave.
+                        request.resource.data.diff(resource.data)
+                          .affectedKeys()
+                          .hasOnly([
+                            'memberIds',
+                            'memberCount',
+                            'updatedAt'
+                          ])
+                        && request.resource.data.memberIds is list
+                        && request.resource.data.memberCount is int
+                        && request.resource.data.memberCount == request.resource.data.memberIds.size()
+                        && request.resource.data.memberCount <= resource.data.maxMembers
+                        && (
+                          // Leave: everyone except the current user remains.
+                          (
+                            request.auth.uid in resource.data.memberIds
+                            && !(request.auth.uid in request.resource.data.memberIds)
+                            && resource.data.memberIds.hasAll(request.resource.data.memberIds)
+                            && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+                          )
+                          ||
+                          // Join: all old members remain and current user is added.
+                          (
+                            request.auth.uid in request.resource.data.memberIds
+                            && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+                            && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+                          )
+                        )
+                      )
+                    );
+
+      // Only the creator can delete their study-group listing.
+      allow delete: if request.auth != null
+                    && resource.data.creatorId == request.auth.uid;
+    }
+
+
+    // =====================================================
+    // GROUP CHAT
+    // =====================================================
+    // KEPT COMPATIBLE WITH YOUR WORKING COMMUNITY CHAT.
+    // =====================================================
+    match /groups/{groupId} {
+
+      allow read: if request.auth != null;
+
+
+      allow create: if request.auth != null
+                    && request.resource.data.memberIds is list
+                    && request.auth.uid in request.resource.data.memberIds;
+
+
+      allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data)
+                       .affectedKeys()
+                       .hasOnly([
+                         'memberIds',
+                         'memberCount',
+                         'lastMessage',
+                         'lastMessageAt'
+                       ])
+                    && (
+                      request.auth.uid in resource.data.memberIds
+                      ||
+                      (
+                        request.auth.uid in request.resource.data.memberIds
+                        &&
+                        request.resource.data.memberIds.hasAll(
+                          resource.data.memberIds
+                        )
+                      )
+                    );
+
+
+      allow delete: if false;
+
+
+      // ===================================================
+      // GROUP CHAT MESSAGES
+      // ===================================================
+      match /messages/{messageId} {
+
+        allow read: if request.auth != null
+                    && request.auth.uid in get(
+                      /databases/$(database)/documents/groups/$(groupId)
+                    ).data.memberIds;
+
+
+        allow create: if request.auth != null
+                      && request.resource.data.senderId == request.auth.uid
+                      && request.auth.uid in get(
+                        /databases/$(database)/documents/groups/$(groupId)
+                      ).data.memberIds;
+
+
+        allow update, delete: if false;
+      }
+    }
+
+
+    // =====================================================
+    // COMMUNITY / STUDENT POSTS
+    // =====================================================
+    //
+    // Used by the Community student campus feed:
+    //
+    // studentPosts/{postId}
+    // studentPosts/{postId}/likes/{userId}
+    // studentPosts/{postId}/comments/{commentId}
+    //
+    // This section is independent from all existing
+    // PeerGrid features and does not modify their rules.
+    // =====================================================
+
+    match /studentPosts/{postId} {
+
+      // Signed-in PeerGrid users can view Community posts.
+      allow read: if request.auth != null;
+
+
+      // A student can create a post only as themselves.
+      allow create: if request.auth != null
+                    && request.resource.data.authorId == request.auth.uid
+                    && request.resource.data.authorName is string
+                    && request.resource.data.authorProfileImage is string
+                    && request.resource.data.college is string
+                    && request.resource.data.text is string
+                    && request.resource.data.mediaUrl is string
+                    && request.resource.data.mediaType is string;
+
+
+      // Community posts are not edited by the current app.
+      allow update: if false;
+
+
+      // Community posts are not deleted by the current app.
+      allow delete: if false;
+
+
+      // ===================================================
+      // COMMUNITY POST LIKES
+      // ===================================================
+      //
+      // Each user gets one like document:
+      //
+      // studentPosts/{postId}/likes/{userId}
+      // ===================================================
+
+      match /likes/{userId} {
+
+        // Signed-in users can see likes and like counts.
+        allow read: if request.auth != null;
+
+
+        // A user can create only their own like.
+        allow create: if request.auth != null
+                      && request.auth.uid == userId;
+
+
+        // A user can remove only their own like.
+        allow delete: if request.auth != null
+                      && request.auth.uid == userId;
+
+
+        // Likes cannot be edited.
+        allow update: if false;
+      }
+
+
+      // ===================================================
+      // COMMUNITY POST COMMENTS
+      // ===================================================
+      //
+      // studentPosts/{postId}/comments/{commentId}
+      // ===================================================
+
+      match /comments/{commentId} {
+
+        // Signed-in users can read Community comments.
+        allow read: if request.auth != null;
+
+
+        // A user can create a comment only as themselves.
+        allow create: if request.auth != null
+                      && request.resource.data.userId == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 2000;
+
+
+        // A user can edit only their own comment.
+        // The comment owner cannot be changed.
+        allow update: if request.auth != null
+                      && resource.data.userId == request.auth.uid
+                      && request.resource.data.userId == resource.data.userId
+                      && request.resource.data.diff(resource.data)
+                         .affectedKeys()
+                         .hasOnly([
+                           'text',
+                           'updatedAt'
+                         ])
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 2000;
+
+
+        // A user can delete only their own comment.
+        allow delete: if request.auth != null
+                      && resource.data.userId == request.auth.uid;
+      }
+    }
+
+
+    // =====================================================
+    // PERSONAL / STUDENT PROFILE POSTS
+    // =====================================================
+    //
+    // Completely separate from Community posts.
+    //
+    // personalPosts/{postId}
+    // personalPosts/{postId}/likes/{userId}
+    // personalPosts/{postId}/comments/{commentId}
+    //
+    // Personal-post media uses the separate Storage path:
+    //
+    // personalPostMedia/{userId}/{postId}/{fileName}
+    // =====================================================
+
+    match /personalPosts/{postId} {
+
+      // Signed-in PeerGrid users can view personal posts.
+      // This allows posts on student profiles to be visible
+      // to other users.
+      allow read: if request.auth != null;
+
+
+      // A student can create a personal post only as themselves.
+      allow create: if request.auth != null
+                    && request.resource.data.authorId == request.auth.uid
+                    && request.resource.data.authorName is string
+                    && request.resource.data.authorProfileImage is string
+                    && request.resource.data.text is string
+                    && request.resource.data.mediaUrl is string
+                    && request.resource.data.mediaType is string;
+
+
+      // Personal posts can only be edited by their owner.
+      // The author cannot be changed.
+      allow update: if request.auth != null
+                    && resource.data.authorId == request.auth.uid
+                    && request.resource.data.authorId == resource.data.authorId
+                    && request.resource.data.diff(resource.data)
+                       .affectedKeys()
+                       .hasOnly([
+                         'text',
+                         'mediaUrl',
+                         'mediaType',
+                         'mentionedUserIds',
+                         'mentionedUsernames',
+                         'updatedAt'
+                       ])
+                    && request.resource.data.text is string
+                    && request.resource.data.mediaUrl is string
+                    && request.resource.data.mediaType is string;
+
+
+      // A student can delete only their own personal post.
+      allow delete: if request.auth != null
+                    && resource.data.authorId == request.auth.uid;
+
+
+      // ===================================================
+      // PERSONAL POST LIKES
+      // ===================================================
+      //
+      // personalPosts/{postId}/likes/{userId}
+      // ===================================================
+
+      match /likes/{userId} {
+
+        // Signed-in users can see personal-post likes/counts.
+        allow read: if request.auth != null;
+
+
+        // A user can create only their own like.
+        allow create: if request.auth != null
+                      && request.auth.uid == userId;
+
+
+        // A user can remove only their own like.
+        allow delete: if request.auth != null
+                      && request.auth.uid == userId;
+
+
+        // Likes cannot be edited.
+        allow update: if false;
+      }
+
+
+      // ===================================================
+      // PERSONAL POST COMMENTS
+      // ===================================================
+      //
+      // personalPosts/{postId}/comments/{commentId}
+      // ===================================================
+
+      match /comments/{commentId} {
+
+        // Signed-in users can read personal-post comments.
+        allow read: if request.auth != null;
+
+
+        // A user can create a comment only as themselves.
+        allow create: if request.auth != null
+                      && request.resource.data.userId == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 2000;
+
+
+        // A user can edit only their own comment.
+        // The comment owner cannot be changed.
+        allow update: if request.auth != null
+                      && resource.data.userId == request.auth.uid
+                      && request.resource.data.userId == resource.data.userId
+                      && request.resource.data.diff(resource.data)
+                         .affectedKeys()
+                         .hasOnly([
+                           'text',
+                           'updatedAt'
+                         ])
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 2000;
+
+
+        // A user can delete only their own comment.
+        allow delete: if request.auth != null
+                      && resource.data.userId == request.auth.uid;
+      }
+    }
+
+
+    // =====================================================
+    // COLLEGE ADMIN CHECK
+    // =====================================================
+    function isCollegeAdmin(collegeId) {
+
+      return request.auth != null
+
+          && exists(
+            /databases/$(database)/documents/collegeAdmins/$(request.auth.uid)
+          )
+
+          && get(
+            /databases/$(database)/documents/collegeAdmins/$(request.auth.uid)
+          ).data.role == 'college_admin'
+
+          && get(
+            /databases/$(database)/documents/collegeAdmins/$(request.auth.uid)
+          ).data.collegeId == collegeId;
+    }
+  }
+}

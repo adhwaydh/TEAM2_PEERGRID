@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "418720413675",
+    "project_id": "peergrid-71fcf",
+    "storage_bucket": "peergrid-71fcf.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:418720413675:android:81e65761418afb03384bae",
+        "android_client_info": {
+          "package_name": "com.peergrid.peergrid1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9XKNniNgqjSKQODzAB8hvNnZrxnAibWw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

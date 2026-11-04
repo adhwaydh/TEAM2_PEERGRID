@@ -1,0 +1,11 @@
+peergrid_ml_backend/
+├── dataset/
+│   └── keam_cutoff.csv
+├── model/
+│   ├── keam_recommender.pkl
+│   └── model_metadata.json
+├── train_model.py
+├── predict.py
+├── main.py
+├── requirements.txt
+└── README.md
